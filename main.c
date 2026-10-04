@@ -47,15 +47,9 @@ void all_pairs_shortest_path(int* matrix, int* sol, int n) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc < 2) {
-    fprintf(stderr, "Missing input file");
-    return 1;
-  }
-
-  FILE *f = fopen(argv[1], "r");
 
   int n;
-  fscanf(f, "%d", &n);
+  scanf("%d", &n);
 
   int* matrix = (int*)malloc(n*n*sizeof(int));
   int* sol = (int*)malloc(n*n*sizeof(int));
@@ -63,7 +57,7 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < n; i++) {
     for (int j = 0; j < n; j++) {
       int cost;
-      fscanf(f, "%d", &cost);
+      scanf("%d", &cost);
       matrix[i*n + j] = cost;
       if (i != j && cost == 0) {
         matrix[i*n + j] = UPPER_LIMIT;
@@ -76,6 +70,4 @@ int main(int argc, char *argv[]) {
 
   free(matrix);
   free(sol);
-
-  fclose(f);
  }
