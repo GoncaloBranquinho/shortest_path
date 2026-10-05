@@ -70,4 +70,6 @@ int main(int argc, char *argv[]) {
 
   free(matrix);
   free(sol);
+
+  return 0;
  }
