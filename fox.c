@@ -1,70 +1,88 @@
-typedef struct {
+#include <mpi.h>
+#include <math.h>
+#include <stdlib.h>
+
+#define UPPER_LIMIT (INT_MAX / 2)
+
+
+struct { 
   int p;
-  MPI_Comm comm;
+  int q;
+  int row;
+  int col;
   MPI_Comm row_comm;
   MPI_Comm col_comm;
-  int q;
-  int my_row;
-  int my_col;
-  int my_rank;
-} GIRD_INFO_TYPE;
+} Grid;
 
-void Setup_grid(GRID_INFO_TYPE* grid) {
-  int old_rank;
-  int dimensions[2];
-  int periods[2];
-  int coordinate[2];
-  int varying_coords;
+
+int create_cartesian_grid(Grid* grid) {
+
   MPI_Comm_size(MPI_COMM_WORLD, &(grid->p));
-  MPI_Comm_rank(MPI_COMM_WORLD, &old_rank);
-  grid->q = (int)sqrt((double)grid->p);
-  dimensions[0] = dimensions[1] = grid->q;
+  grid->q = sqrt(grid->p);
+  int dims[2], periods[2];
+  dims[0] = dims[1] = q;
   periods[0] = periods[1] = 1;
-  MPI_Cart_create_(MPI_COMM,WORLD, 2, dimensions, periods, 1, &(grid->comm));
-  MPI_Comm_rank(grid->comm, &(grid->my_rank));
-  MPI_Cart_coords(grid->comm, grid->my_rank, 2, coordinate);
-  grid->my_row = coordinate[0];
-  grid->my_col = coordinate[1];
-
-  varying_coords[0] = 0;
-  MPI_Cart_sub(grid->comm, varying_coods, &(grid->row_comm));
-  varying_coords[0] = 1;
-  varying_coords[1] = 0;
-  MPI_Cart_sub(grid->comm, varying_coords, &(grid->col_comm));
+  MPI_Comm grid_comm;
+  // tentar trocar para 1
+  MPI_Cart_create(MPI_COMM_WORLD, q, dims, periods, 0, &grid_comm);
+  MPI_Comm_rank(grid->grid_comm, &(grid->rank));
+  
+  int coords[2];
+  MPI_Cart_coords(grid->grid_comm, grid->rank, grid->q, coords);
+  grid->row = coords[0];
+  grid->col = coords[1];
+  dims[0] = 0;
+  dims[1] = 1;
+  MPI_cart_sub(grid->grid_comm, dims, grid->row_comm);
+  dims[0] = 1;
+  dims[1] = 0;
+  MPI_cart_sub(grid->grid_comm, dims, grid->col_comm);
+  MPI_Comm_free(grid_comm);
+  
 }
 
-void Fox(int n, GRID_INFO_TYPE* grid,
-       LOCAL_MATRIX_TYPE* local_A,
-       LOCAL_MATRIX_TYPE* local_B,
-       LOCAL_MATRIX_TYPE* local_C) {
-  LOCAL_MATRIX_TYPE* temp_A;
-  int step;
-  int bcast_root;
-  int n_bar;
-  int source;
-  int dest;
-  int tag = 43;
+void special_matrix_multiply(int* a, int* b, int* c, int n) {
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      int idx = i*n+j;
+      c[idx] = UPPER_LIMIT;
+      for (int k = 0; k < n; k++) {
+        int aux = a[i*n+k] + b[k*n+j];
+        c[idx] = (c[idx] < aux) ? c[idx] : aux;
+      }
+    }
+  }
+}
+
+void fox(int n, INFO* grid,
+       int* a,
+       int* b,
+       int* c) {
+  
+  int m = n/grid->q; // each submatrix has size m*m 
+  int* buf = (int*)malloc(m*m*sizeof(int)); 
+  int tag = 0;
   MPI_Status status;
-
-  n_bar = n/grid->q;
-  Set_to_zero(local_C);
-
-  source = (grid->my_row + 1) % grid->q;
-  dest = (grid->my_row + grid->q-1) % grid->q;
-
-  temp_A = Local_matrix_allocate(n_bar);
-
-  for (step = 0; step < grid->q; step++) {
-    bcast_root = (grid->my_row + step) % grid->q;
-    if (bcast_root == grid->my_col) {
-      MPI_Bcast(local_A, 1, DERIVED_LOCAL_MATRIX, bcast_root, grid->row_comm);
-      Local_matrix_multiply(local_A, local_B, local_C);
+  
+  for (int step = 0; step < grid->q; step++) {
+    int chosen_submatrix = (grid->row + step) % grid->q;
+    if (chosen_submatrix == grid->col) {
+      MPI_Bcast(a, m*m, MPI_INT, chosen_submatrix, grid->row_comm);
+      Local_matrix_multiply(a, b, c);
     }
     else {
-      MPI_Bcast(temp_A, 1, DERIVED_LOCAL_MATRIX, bcast_root, grid->row_comm);
-      Local_matrix_multiply(temp_A, local_B, local_C);
+      MPI_Bcast(buf, m*m, MPI_INT, chosen_submatrix, grid->row_comm);
+      Local_matrix_multiply(buf, b, c);
     }
-    MPI_Send(local_B, 1, DERIVED_LOCAL_MATRIX, dest, tag, grid->col_comm);
-    MPI_Recv(local_B, 1, DERIVED_LOCAL_MATRIX, source, tag, grid->col_comm, &status);
+
+    int aux, from, to;
+    aux = (grid->row+1) % grid->q;
+    MPI_Cart_rank(grid->col_comm, &aux, &from);
+    aux = (grid->row + grid->q - 1) % grid->q;
+    MPI_Cart_rank(grid->col_comm, &aux, &to); 
+    
+    MPI_Send(b, m*m, MPI_INT, to, tag, grid->col_comm);
+    MPI_Recv(b, m*m, MPI_INT, from, tag, grid->col_comm, &status);
   }
+  free(buf);
 }
